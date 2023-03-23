@@ -25,6 +25,11 @@ CacheBase::CacheBase(
    m_log_blocksize = floorLog2(m_blocksize);
    m_log_num_sets = floorLog2(m_num_sets);
 
+   is_hash_initialized = false;
+
+   setStartArray = (int *) calloc(m_shared_cores, sizeof(int));
+   setLengthArray = (int *) calloc(m_shared_cores, sizeof(int));
+
    LOG_ASSERT_ERROR((m_num_sets == (1UL << floorLog2(m_num_sets))) || (hash != CacheBase::HASH_MASK),
       "Caches of non-power of 2 size need funky hash function");
 }
@@ -52,6 +57,8 @@ CacheBase::parseAddressHash(String hash_name)
    	  return CacheBase::HASH_MER_MOD;
    else if (hash_name == "fair_share")
    	  return CacheBase::HASH_FAIR_SHARE;
+   else if (hash_name == "unfair_share")
+   	  return CacheBase::HASH_UNFAIR_SHARE;
    else
       LOG_PRINT_ERROR("Invalid address hash function %s", hash_name.c_str());
 }
@@ -122,8 +129,39 @@ CacheBase::splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index) const
          set_index = ((block_num << floorLog2(m_shared_cores)) + m_core_id) % (m_num_sets);
          break;
       }
+
+      case CacheBase::HASH_UNFAIR_SHARE:
+      {
+         initializeUnfairHash();
+         set_index = setStartArray[m_core_id] + block_num % setLengthArray[m_core_id];
+         break;
+      }
+
       default:
          LOG_PRINT_ERROR("Invalid hash function %d", m_hash);
+   }
+}
+
+void CacheBase::initializeUnfairHash() const{
+   if(is_hash_initialized)
+      return;
+
+   is_hash_initialized = true;
+
+   int coreShare[] = {97, 1, 1, 1};
+
+   std::cout << "Number Of Sets: " << m_num_sets << std::endl;
+
+   for(int i = 0; i < m_shared_cores; i++){
+      setLengthArray[i] = (int)((coreShare[i] / 100.0) * m_num_sets);
+
+      if(i == 0){
+         setStartArray[i] = 0;
+      } else{
+         setStartArray[i] = setStartArray[i - 1] + setLengthArray[i - 1];
+      }
+
+      std::cout << "Core " << i << ":\tSet Start: " << setStartArray[i] << "\tSet Length: " << setLengthArray[i] << std::endl;
    }
 }
 

@@ -47,6 +47,7 @@ class CacheBase
          HASH_XOR_MOD,
          HASH_MER_MOD,
          HASH_FAIR_SHARE,
+         HASH_UNFAIR_SHARE,
       };
 
       enum ReplacementPolicy
@@ -80,6 +81,12 @@ class CacheBase
       // computed params
       UInt32 m_log_blocksize;
       UInt32 m_log_num_sets;
+
+   private:
+      mutable bool is_hash_initialized;
+      void initializeUnfairHash() const;  // Initializes the Start and Length array
+      int* setStartArray;
+      int* setLengthArray;
 
    public:
       // constructors/destructors
