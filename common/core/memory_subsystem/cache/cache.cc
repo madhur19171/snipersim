@@ -15,9 +15,11 @@ Cache::Cache(
    cache_t cache_type,
    hash_t hash,
    FaultInjector *fault_injector,
-   AddressHomeLookup *ahl)
+   AddressHomeLookup *ahl,
+   int shared_cores,
+   bool is_last_level_cache)
 :
-   CacheBase(name, num_sets, associativity, cache_block_size, hash, ahl),
+   CacheBase(name, num_sets, associativity, cache_block_size, hash, ahl, shared_cores, core_id, is_last_level_cache),
    m_enabled(false),
    m_num_accesses(0),
    m_num_hits(0),

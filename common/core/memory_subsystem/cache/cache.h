@@ -47,7 +47,9 @@ class Cache : public CacheBase
             cache_t cache_type,
             hash_t hash = CacheBase::HASH_MASK,
             FaultInjector *fault_injector = NULL,
-            AddressHomeLookup *ahl = NULL);
+            AddressHomeLookup *ahl = NULL,
+            int shared_cores = 0,
+            bool is_last_level_cache = false);
       ~Cache();
 
       Lock& getSetLock(IntPtr addr);

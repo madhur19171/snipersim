@@ -4,9 +4,11 @@
 #include "rng.h"
 #include "address_home_lookup.h"
 
+#include <iostream>
+
 CacheBase::CacheBase(
    String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size,
-   CacheBase::hash_t hash, AddressHomeLookup *ahl)
+   CacheBase::hash_t hash, AddressHomeLookup *ahl, int shared_cores, core_id_t core_id, bool is_last_level_cache)
 :
    m_name(name),
    m_cache_size(UInt64(num_sets) * associativity * cache_block_size),
@@ -14,7 +16,11 @@ CacheBase::CacheBase(
    m_blocksize(cache_block_size),
    m_hash(hash),
    m_num_sets(num_sets),
-   m_ahl(ahl)
+   m_ahl(ahl),
+   m_shared_cores(shared_cores),
+   m_core_id(core_id),
+   m_is_last_level_cache(is_last_level_cache)
+
 {
    m_log_blocksize = floorLog2(m_blocksize);
    m_log_num_sets = floorLog2(m_num_sets);
@@ -44,6 +50,8 @@ CacheBase::parseAddressHash(String hash_name)
    	  return CacheBase::HASH_XOR_MOD;
    else if (hash_name == "mersenne_mod")
    	  return CacheBase::HASH_MER_MOD;
+   else if (hash_name == "fair_share")
+   	  return CacheBase::HASH_FAIR_SHARE;
    else
       LOG_PRINT_ERROR("Invalid address hash function %s", hash_name.c_str());
 }
@@ -103,6 +111,16 @@ CacheBase::splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index) const
       	 //Disadvantage of this mod is that we will not use one set in our cache.
       	 set_index = block_num % (m_num_sets - 1);
       	 break;
+      }
+      case CacheBase::HASH_FAIR_SHARE:
+      {
+         /* For LLC, in Set-Based Partitioning
+            Each core is given equal number of
+            Sets in the cache.
+            For non-LLC, it is same as HASH_MOD
+          */
+         set_index = ((block_num << floorLog2(m_shared_cores)) + m_core_id) % (m_num_sets);
+         break;
       }
       default:
          LOG_PRINT_ERROR("Invalid hash function %d", m_hash);

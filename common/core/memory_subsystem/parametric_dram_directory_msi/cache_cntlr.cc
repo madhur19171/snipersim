@@ -10,6 +10,7 @@
 #include "shmem_perf.h"
 
 #include <cstring>
+#include <iostream>
 
 // Define to allow private L2 caches not to take the stack lock.
 // Works in most cases, but seems to have some more bugs or race conditions, preventing it from being ready for prime time.
@@ -177,7 +178,10 @@ CacheCntlr::CacheCntlr(MemComponent::component_t mem_component,
             CacheBase::parseAddressHash(cache_params.hash_function),
             Sim()->getFaultinjectionManager()
                ? Sim()->getFaultinjectionManager()->getFaultInjector(m_core_id_master, mem_component)
-               : NULL);
+               : NULL,
+            NULL,
+            cache_params.shared_cores,
+            is_last_level_cache);
       m_master->m_prefetcher = Prefetcher::createPrefetcher(cache_params.prefetcher, cache_params.configName, m_core_id, m_shared_cores);
 
       if (Sim()->getCfg()->getBoolDefault("perf_model/" + cache_params.configName + "/atd/enabled", false))
@@ -369,6 +373,7 @@ LOG_ASSERT_ERROR(offset + data_length <= getCacheBlockSize(), "access until %u >
    CacheBlockInfo *cache_block_info;
    bool cache_hit = operationPermissibleinCache(ca_address, mem_op_type, &cache_block_info), prefetch_hit = false;
 
+   // We are not bothered about the Perfect or Passthrough schemes. Ignore this If Clause
    if (!cache_hit && m_perfect)
    {
       cache_hit = true;
@@ -475,16 +480,22 @@ MYLOG("L1 miss");
          acquireStackLock(ca_address, true);
       #endif
 
+      // LOG_PRINT("L1 Miss\tAddess: 0x%x\tCurrent Cache State: %d", ca_address, getCacheState(ca_address));
+
       // Invalidate the cache block before passing the request to L2 Cache
+      // A write Miss occurs when the cache block to be written is in any state other than Modified.
+      // So the cache block is first invalidated before sending the request to the lower level cache
       if (getCacheState(ca_address) != CacheState::INVALID)
       {
          invalidateCacheBlock(ca_address);
+         // LOG_PRINT("Invalidation after Miss\tAddess: 0x%x\tCache State: (%d)", ca_address, getCacheState(ca_address));
       }
 
-MYLOG("processMemOpFromCore l%d before next", m_mem_component);
+LOG_PRINT("processMemOpFromCore %s before next", MemComponentString(m_mem_component));
+      // Sending the Miss request to the Next Level Cache
       hit_where = m_next_cache_cntlr->processShmemReqFromPrevCache(this, mem_op_type, ca_address, modeled, count, Prefetch::NONE, t_start, false);
       bool next_cache_hit = hit_where != HitWhere::MISS;
-MYLOG("processMemOpFromCore l%d next hit = %d", m_mem_component, next_cache_hit);
+LOG_PRINT("processMemOpFromCore %s next hit = %d", MemComponentString(m_mem_component), next_cache_hit);
 
       if (next_cache_hit) {
 
@@ -865,6 +876,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
          {
             if (*it != requester)
             {
+               // Madhur: This will Probably ensure that all the sharers of a cache line to be written to are being invalidated in the upper layer cache
                std::pair<SubsecondTime, bool> res = (*it)->updateCacheBlock(address, CacheState::INVALID, Transition::COHERENCY, NULL, ShmemPerfModel::_USER_THREAD);
                latency = getMax<SubsecondTime>(latency, res.first);
                sibling_hit |= res.second;
@@ -882,13 +894,21 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
          MYLOG("reading MODIFIED data");
          /* Writeback in previous levels */
          SubsecondTime latency = SubsecondTime::Zero();
+         int counter = 0;  // To count the number of sharers in the upper level cache
          for(CacheCntlrList::iterator it = m_master->m_prev_cache_cntlrs.begin(); it != m_master->m_prev_cache_cntlrs.end(); it++) {
             if (*it != requester) {
+               /* Madhur: This code being executed means that the Upper level cache had the requested data in invalid state(That's why there was a read miss!)
+                * This level cache has the data in Modified state. This means that the requested cache line is in some upper level cache in Modified state or
+                * in multiple caches in Shared Dirty state.
+                * Make that cache state Shared.
+                */
+               counter++;
                std::pair<SubsecondTime, bool> res = (*it)->updateCacheBlock(address, CacheState::SHARED, Transition::COHERENCY, NULL, ShmemPerfModel::_USER_THREAD);
                latency = getMax<SubsecondTime>(latency, res.first);
                sibling_hit |= res.second;
             }
          }
+         // LOG_PRINT("%s:\tRead Modified Address 0x%x\tNumber of Sharers: %d", MemComponentString(m_mem_component), address, counter);
          MYLOG("add latency %s, sibling_hit(%u)", itostr(latency).c_str(), sibling_hit);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);
@@ -900,6 +920,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
          SubsecondTime latency = SubsecondTime::Zero();
          for(CacheCntlrList::iterator it = m_master->m_prev_cache_cntlrs.begin(); it != m_master->m_prev_cache_cntlrs.end(); it++) {
             if (*it != requester) {
+               // Protocol wise, this condition is no different from MODIFIED operation for a Read hit
                std::pair<SubsecondTime, bool> res = (*it)->updateCacheBlock(address, CacheState::SHARED, Transition::COHERENCY, NULL, ShmemPerfModel::_USER_THREAD);
                latency = getMax<SubsecondTime>(latency, res.first);
                sibling_hit |= res.second;
@@ -933,6 +954,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
          SubsecondTime latency = SubsecondTime::Zero();
          for(CacheCntlrList::iterator it = m_master->m_prev_cache_cntlrs.begin(); it != m_master->m_prev_cache_cntlrs.end(); it++)
             if (*it != requester)
+               // Madhur: Invalidating the cache line in the sharers(non-requesting) as there is a Write.
                latency = getMax<SubsecondTime>(latency, (*it)->updateCacheBlock(address, CacheState::INVALID, Transition::UPGRADE, NULL, ShmemPerfModel::_USER_THREAD).first);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);

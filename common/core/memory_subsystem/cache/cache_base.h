@@ -46,6 +46,7 @@ class CacheBase
          HASH_PRIME_DIS,
          HASH_XOR_MOD,
          HASH_MER_MOD,
+         HASH_FAIR_SHARE,
       };
 
       enum ReplacementPolicy
@@ -72,6 +73,9 @@ class CacheBase
       CacheBase::hash_t m_hash;
       UInt32 m_num_sets;
       AddressHomeLookup *m_ahl;
+      int m_shared_cores;
+      core_id_t m_core_id;
+      bool m_is_last_level_cache;
 
       // computed params
       UInt32 m_log_blocksize;
@@ -79,7 +83,7 @@ class CacheBase
 
    public:
       // constructors/destructors
-      CacheBase(String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size, CacheBase::hash_t hash, AddressHomeLookup *ahl = NULL);
+      CacheBase(String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size, CacheBase::hash_t hash, AddressHomeLookup *ahl = NULL, int shared_cores = 0, core_id_t core_id = 0, bool  is_last_level_cache = false);
       virtual ~CacheBase();
 
       // utilities

@@ -14,6 +14,7 @@
 #include "topology_info.h"
 
 #include <algorithm>
+#include <iostream>
 
 #if 0
    extern Lock iolock;
