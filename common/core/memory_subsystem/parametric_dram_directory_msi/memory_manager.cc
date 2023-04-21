@@ -121,6 +121,7 @@ MemoryManager::MemoryManager(Core* core,
             Sim()->getCfg()->getIntArray(   "perf_model/" + configName + "/associativity", core->getId()),
             getCacheBlockSize(),
             Sim()->getCfg()->getStringArray("perf_model/" + configName + "/address_hash", core->getId()),
+            Sim()->getCfg()->getStringArray("perf_model/" + configName + "/partition_info", core->getId()),
             Sim()->getCfg()->getStringArray("perf_model/" + configName + "/replacement_policy", core->getId()),
             Sim()->getCfg()->getBoolArray(  "perf_model/" + configName + "/perfect", core->getId()),
             i == MemComponent::L1_ICACHE
@@ -159,6 +160,7 @@ MemoryManager::MemoryManager(Core* core,
             Sim()->getCfg()->getIntArray(   "perf_model/nuca/associativity", core->getId()),
             getCacheBlockSize(),
             Sim()->getCfg()->getStringArray("perf_model/nuca/address_hash", core->getId()),
+            Sim()->getCfg()->getStringArray("perf_model/nuca/partition_info", core->getId()),
             Sim()->getCfg()->getStringArray("perf_model/nuca/replacement_policy", core->getId()),
             false, true,
             ComponentLatency(global_domain, Sim()->getCfg()->getIntArray("perf_model/nuca/data_access_time", core->getId())),
@@ -455,11 +457,11 @@ MYLOG("begin");
    MemComponent::component_t receiver_mem_component = shmem_msg->getReceiverMemComponent();
    MemComponent::component_t sender_mem_component = shmem_msg->getSenderMemComponent();
 
-   if (m_enabled)
-   {
+   // if (m_enabled)
+   // {
       LOG_PRINT("Got Shmem Msg: type(%i), address(0x%x), sender_mem_component(%u), receiver_mem_component(%u), sender(%i), receiver(%i)",
             shmem_msg->getMsgType(), shmem_msg->getAddress(), sender_mem_component, receiver_mem_component, sender, packet.receiver);
-   }
+   // }
 
    switch (receiver_mem_component)
    {
@@ -539,7 +541,7 @@ MYLOG("end");
 void
 MemoryManager::sendMsg(PrL1PrL2DramDirectoryMSI::ShmemMsg::msg_t msg_type, MemComponent::component_t sender_mem_component, MemComponent::component_t receiver_mem_component, core_id_t requester, core_id_t receiver, IntPtr address, Byte* data_buf, UInt32 data_length, HitWhere::where_t where, ShmemPerf *perf, ShmemPerfModel::Thread_t thread_num)
 {
-MYLOG("send msg %u %ul%u > %ul%u", msg_type, requester, sender_mem_component, receiver, receiver_mem_component);
+LOG_PRINT("send msg %u %ul%u > %ul%u", msg_type, requester, sender_mem_component, receiver, receiver_mem_component);
    assert((data_buf == NULL) == (data_length == 0));
    PrL1PrL2DramDirectoryMSI::ShmemMsg shmem_msg(msg_type, sender_mem_component, receiver_mem_component, requester, address, data_buf, data_length, perf);
    shmem_msg.setWhere(where);
@@ -548,10 +550,10 @@ MYLOG("send msg %u %ul%u > %ul%u", msg_type, requester, sender_mem_component, re
    SubsecondTime msg_time = getShmemPerfModel()->getElapsedTime(thread_num);
    perf->updateTime(msg_time);
 
-   if (m_enabled)
-   {
+   // if (m_enabled)
+   // {
       LOG_PRINT("Sending Msg: type(%u), address(0x%x), sender_mem_component(%u), receiver_mem_component(%u), requester(%i), sender(%i), receiver(%i)", msg_type, address, sender_mem_component, receiver_mem_component, requester, getCore()->getId(), receiver);
-   }
+   // }
 
    NetPacket packet(msg_time, SHARED_MEM_1,
          m_core_id_master, receiver,

@@ -88,6 +88,7 @@ void CacheMasterCntlr::createSetLocks(UInt32 cache_block_size, UInt32 num_sets, 
    m_setlocks.resize(m_num_sets, SetLock(core_offset, num_cores));
 }
 
+// Madhur: This set lock locks the set obtained by MASK Hash. May create problem
 SetLock*
 CacheMasterCntlr::getSetLock(IntPtr addr)
 {
@@ -142,6 +143,7 @@ CacheCntlr::CacheCntlr(MemComponent::component_t mem_component,
    m_coherent(cache_params.coherent),
    m_prefetch_on_prefetch_hit(false),
    m_l1_mshr(cache_params.outstanding_misses > 0),
+   m_is_last_level_cache(is_last_level_cache),
    m_core_id(core_id),
    m_cache_block_size(cache_block_size),
    m_cache_writethrough(cache_params.writethrough),
@@ -181,7 +183,8 @@ CacheCntlr::CacheCntlr(MemComponent::component_t mem_component,
                : NULL,
             NULL,
             cache_params.shared_cores,
-            is_last_level_cache);
+            is_last_level_cache,
+            cache_params.partition_info);
       m_master->m_prefetcher = Prefetcher::createPrefetcher(cache_params.prefetcher, cache_params.configName, m_core_id, m_shared_cores);
 
       if (Sim()->getCfg()->getBoolDefault("perf_model/" + cache_params.configName + "/atd/enabled", false))
@@ -830,6 +833,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
       updateCounters(mem_op_type, address, cache_hit, getCacheState(address), isPrefetch);
    }
 
+   LOG_PRINT("processShmemReqFromPrevCache: Memory Component: %s\tAddress: 0x%x\tHit: %d", MemComponentString(m_mem_component), address, cache_hit);
    if (cache_hit)
    {
       if (isPrefetch == Prefetch::NONE && cache_block_info->hasOption(CacheBlockInfo::PREFETCH))
@@ -891,6 +895,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
       }
       else if (cache_block_info->getCState() == CacheState::MODIFIED) // reading MODIFIED data
       {
+         LOG_PRINT("reading MODIFIED data");
          MYLOG("reading MODIFIED data");
          /* Writeback in previous levels */
          SubsecondTime latency = SubsecondTime::Zero();
@@ -908,6 +913,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
                sibling_hit |= res.second;
             }
          }
+         LOG_PRINT("%s:\tRead Modified Address 0x%x\tNumber of Sharers: %d", MemComponentString(m_mem_component), address, counter);
          // LOG_PRINT("%s:\tRead Modified Address 0x%x\tNumber of Sharers: %d", MemComponentString(m_mem_component), address, counter);
          MYLOG("add latency %s, sibling_hit(%u)", itostr(latency).c_str(), sibling_hit);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
@@ -927,6 +933,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
             }
          }
 
+         LOG_PRINT("%s:\tRead Exclusive Address 0x%x", MemComponentString(m_mem_component), address);
          MYLOG("add latency %s, sibling_hit(%u)", itostr(latency).c_str(), sibling_hit);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);
@@ -958,6 +965,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
                latency = getMax<SubsecondTime>(latency, (*it)->updateCacheBlock(address, CacheState::INVALID, Transition::UPGRADE, NULL, ShmemPerfModel::_USER_THREAD).first);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);
+         LOG_PRINT("%s:\tWrite Miss Exclusive Address 0x%x", MemComponentString(m_mem_component), address);
          #ifdef ENABLE_TRACK_SHARING_PREVCACHES
          assert(! cache_block_info->hasCachedLoc());
          #endif
@@ -997,6 +1005,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
 
             cache_hit = true;
             hit_where = HitWhere::where_t(m_mem_component);
+            LOG_PRINT("Silent upgrade from E -> M for address %lx", address);
             MYLOG("Silent upgrade from E -> M for address %lx", address);
             cache_block_info->setCState(CacheState::MODIFIED);
          }
@@ -1032,6 +1041,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
          }
          else
          {
+            LOG_PRINT("LLC Miss on address 0x%x\tInitiating Directory Access", address);
             initiateDirectoryAccess(mem_op_type, address, isPrefetch != Prefetch::NONE, t_issue);
          }
       }
@@ -1257,6 +1267,7 @@ CacheCntlr::processUpgradeReqToDirectory(IntPtr address, ShmemPerf *perf, ShmemP
 void
 CacheCntlr::processShReqToDirectory(IntPtr address)
 {
+   LOG_PRINT("SH REQ @ %lx", address);
 MYLOG("SH REQ @ %lx", address);
    getMemoryManager()->sendMsg(PrL1PrL2DramDirectoryMSI::ShmemMsg::SH_REQ,
          MemComponent::LAST_LEVEL_CACHE, MemComponent::TAG_DIR,
@@ -1317,12 +1328,22 @@ CacheCntlr::accessCache(
    {
       case Core::READ:
       case Core::READ_EX:
-         m_master->m_cache->accessSingleLine(ca_address + offset, Cache::LOAD, data_buf, data_length,
+         LOG_PRINT("accessCache: LLC\tAddress: 0x%x\tType: READ", ca_address);
+         if(m_is_last_level_cache)
+            m_master->m_cache->accessSingleLine(m_core_id, ca_address + offset, Cache::LOAD, data_buf, data_length,
+                                             getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
+         else
+            m_master->m_cache->accessSingleLine(ca_address + offset, Cache::LOAD, data_buf, data_length,
                                              getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
          break;
 
       case Core::WRITE:
-         m_master->m_cache->accessSingleLine(ca_address + offset, Cache::STORE, data_buf, data_length,
+         LOG_PRINT("accessCache: LLC\tAddress: 0x%x\tType: WRITE", ca_address);
+         if(m_is_last_level_cache)
+            m_master->m_cache->accessSingleLine(m_core_id, ca_address + offset, Cache::STORE, data_buf, data_length,
+                                             getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
+         else
+            m_master->m_cache->accessSingleLine(ca_address + offset, Cache::STORE, data_buf, data_length,
                                              getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
          // Write-through cache - Write the next level cache also
          if (m_cache_writethrough) {
@@ -1349,7 +1370,7 @@ MYLOG("writethrough done");
 SharedCacheBlockInfo*
 CacheCntlr::getCacheBlockInfo(IntPtr address)
 {
-   return (SharedCacheBlockInfo*) m_master->m_cache->peekSingleLine(address);
+   return (SharedCacheBlockInfo*) ( m_is_last_level_cache ? m_master->m_cache->peekSingleLine(m_core_id, address) : m_master->m_cache->peekSingleLine(address));
 }
 
 CacheState::cstate_t
@@ -1380,7 +1401,11 @@ CacheCntlr::invalidateCacheBlock(IntPtr address)
    assert(old_cstate != CacheState::MODIFIED);
    assert(old_cstate != CacheState::INVALID);
 
-   m_master->m_cache->invalidateSingleLine(address);
+   LOG_PRINT("invalidateCacheBlock: LLC\tAddress: 0x%x", address);
+   if(m_is_last_level_cache)
+      m_master->m_cache->invalidateSingleLine(m_core_id, address);
+   else
+      m_master->m_cache->invalidateSingleLine(address);
 
    if (m_next_cache_cntlr)
       m_next_cache_cntlr->notifyPrevLevelEvict(m_core_id_master, m_mem_component, address);
@@ -1391,8 +1416,13 @@ CacheCntlr::invalidateCacheBlock(IntPtr address)
 void
 CacheCntlr::retrieveCacheBlock(IntPtr address, Byte* data_buf, ShmemPerfModel::Thread_t thread_num, bool update_replacement)
 {
-   __attribute__((unused)) SharedCacheBlockInfo* cache_block_info = (SharedCacheBlockInfo*) m_master->m_cache->accessSingleLine(
-      address, Cache::LOAD, data_buf, getCacheBlockSize(), getShmemPerfModel()->getElapsedTime(thread_num), update_replacement);
+   LOG_PRINT("retrieveCacheBlock: Address: 0x%x", address);
+   __attribute__((unused)) SharedCacheBlockInfo* cache_block_info = (SharedCacheBlockInfo*) ( 
+                                                                                                m_is_last_level_cache ? 
+                                                                                                m_master->m_cache->accessSingleLine(m_core_id, address, Cache::LOAD, data_buf, getCacheBlockSize(), getShmemPerfModel()->getElapsedTime(thread_num), update_replacement) 
+                                                                                                : 
+                                                                                                m_master->m_cache->accessSingleLine(address, Cache::LOAD, data_buf, getCacheBlockSize(), getShmemPerfModel()->getElapsedTime(thread_num), update_replacement)
+                                                                                             );
    LOG_ASSERT_ERROR(cache_block_info != NULL, "Expected block to be there but it wasn't");
 }
 
@@ -1412,7 +1442,13 @@ MYLOG("insertCacheBlock l%d @ %lx as %c (now %c)", m_mem_component, address, CSt
 
    LOG_ASSERT_ERROR(getCacheState(address) == CacheState::INVALID, "we already have this line, can't add it again");
 
-   m_master->m_cache->insertSingleLine(address, data_buf,
+   LOG_PRINT("insertCacheBlock: Address: 0x%x", address);
+   if(m_is_last_level_cache)
+      m_master->m_cache->insertSingleLine(m_core_id, address, data_buf,
+         &eviction, &evict_address, &evict_block_info, evict_buf,
+         getShmemPerfModel()->getElapsedTime(thread_num), this);
+   else 
+      m_master->m_cache->insertSingleLine(address, data_buf,
          &eviction, &evict_address, &evict_block_info, evict_buf,
          getShmemPerfModel()->getElapsedTime(thread_num), this);
    SharedCacheBlockInfo* cache_block_info = setCacheState(address, cstate);
@@ -1750,8 +1786,13 @@ assert(data_length==getCacheBlockSize());
       if (data_buf)
          memcpy(m_master->m_evicting_buf + offset, data_buf, data_length);
    } else {
-      __attribute__((unused)) SharedCacheBlockInfo* cache_block_info = (SharedCacheBlockInfo*) m_master->m_cache->accessSingleLine(
-         address + offset, Cache::STORE, data_buf, data_length, getShmemPerfModel()->getElapsedTime(thread_num), false);
+      LOG_PRINT("writeCacheBlock: Address: 0x%x", address);
+      __attribute__((unused)) SharedCacheBlockInfo* cache_block_info = (SharedCacheBlockInfo*) (m_is_last_level_cache ? 
+                                                                                                m_master->m_cache->accessSingleLine(
+                                                                                                   m_core_id, address + offset, Cache::STORE, data_buf, data_length, getShmemPerfModel()->getElapsedTime(thread_num), false)
+                                                                                                :
+                                                                                                m_master->m_cache->accessSingleLine(
+                                                                                                   address + offset, Cache::STORE, data_buf, data_length, getShmemPerfModel()->getElapsedTime(thread_num), false));
       LOG_ASSERT_ERROR(cache_block_info, "writethrough expected a hit at next-level cache but got miss");
       LOG_ASSERT_ERROR(cache_block_info->getCState() == CacheState::MODIFIED, "Got writeback for non-MODIFIED line");
    }

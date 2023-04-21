@@ -13,6 +13,10 @@
 # patch rejections
 *.rej
 
+.vscode
+.metals
+.gitignore
+
 # test output
 *.log
 sim.out

@@ -146,6 +146,7 @@ DramDirectoryCntlr::handleMsgFromL2Cache(core_id_t sender, ShmemMsg* shmem_msg)
          MYLOG("ENqueued S REQ for address %lx", address );
          if (m_dram_directory_req_queue_list->size(address) == 1)
          {
+            LOG_PRINT("Called processShReqFromL2Cache() from handleMsgFromL2Cache");
             processShReqFromL2Cache(shmem_req);
          }
          else
@@ -242,7 +243,8 @@ DramDirectoryCntlr::processNextReqFromL2Cache(IntPtr address)
       }
       else if (shmem_req->getShmemMsg()->getMsgType() == ShmemMsg::SH_REQ)
       {
-         MYLOG("A new SH_REQ for address(%lx) found", address);
+         LOG_PRINT("A new SH_REQ for address(%lx) found", address);
+         LOG_PRINT("Called processShReqFromL2Cache() from processNextReqFromL2Cache");
          processShReqFromL2Cache(shmem_req);
       }
       else if (shmem_req->getShmemMsg()->getMsgType() == ShmemMsg::UPGRADE_REQ)
@@ -474,6 +476,8 @@ DramDirectoryCntlr::processExReqFromL2Cache(ShmemReq* shmem_req, Byte* cached_da
          directory_entry->setOwner(requester);
          directory_block_info->setDState(DirectoryState::MODIFIED);
 
+         LOG_PRINT("processExReqFromL2Cache(): Setting Owner of 0x%x to %d\tCurr State: UNCACHED", address, requester);
+
          retrieveDataAndSendToL2Cache(ShmemMsg::EX_REP, requester, address, cached_data_buf, shmem_req->getShmemMsg());
          break;
       }
@@ -505,10 +509,18 @@ DramDirectoryCntlr::processShReqFromL2Cache(ShmemReq* shmem_req, Byte* cached_da
 
    updateShmemPerf(shmem_req, ShmemPerf::TD_ACCESS);
 
+   LOG_PRINT("processShReqFromL2Cache: 0x%x\t%d", address, curr_dstate);
+
    switch (curr_dstate)
    {
       case DirectoryState::EXCLUSIVE:
       {
+         LOG_PRINT("WB_REQ>%d for %lx", directory_entry->getOwner(), address  )
+                  assert(cached_data_buf == NULL);
+         if(requester == directory_entry->getOwner()){
+            LOG_PRINT("Error: Requester(%d) and Owner(%d) are the same", requester, directory_entry->getOwner() )
+            LOG_PRINT("Core ID: %d", m_core_id);
+         }
          assert (requester != directory_entry->getOwner());
          MYLOG("WB_REQ>%d for %lx", directory_entry->getOwner(), address  )
                   assert(cached_data_buf == NULL);
@@ -582,6 +594,7 @@ DramDirectoryCntlr::processShReqFromL2Cache(ShmemReq* shmem_req, Byte* cached_da
          assert(add_result == true);
 
          directory_entry->setOwner(requester);
+         LOG_PRINT("processShReqFromL2Cache(): Setting Owner of 0x%x to %d\tCurr State: UNCACHED", address, requester);
 
          if (m_protocol == CoherencyProtocol::MSI)
          {
@@ -882,6 +895,7 @@ DramDirectoryCntlr::processInvRepFromL2Cache(core_id_t sender, ShmemMsg* shmem_m
          {
             // A ShmemMsg::SH_REQ caused the invalidation
             updateShmemPerf(shmem_req, ShmemPerf::INV_IMBALANCE);
+            LOG_PRINT("Called processShReqFromL2Cache() from processInvRepFromL2Cache");
             processShReqFromL2Cache(shmem_req);
          }
       }
@@ -978,6 +992,8 @@ DramDirectoryCntlr::processUpgradeReqFromL2Cache(ShmemReq* shmem_req, Byte* cach
             directory_entry->setOwner(requester);
             directory_block_info->setDState(DirectoryState::MODIFIED);
 
+            LOG_PRINT("processUpgradeReqFromL2Cache(): Setting Owner of 0x%x to %d\tCurr State: SHARED->MODIFIED", address, requester);
+
             getMemoryManager()->sendMsg(ShmemMsg::UPGRADE_REP,
                   MemComponent::TAG_DIR, MemComponent::L2_CACHE,
                   requester /* requester */,
@@ -1047,6 +1063,7 @@ DramDirectoryCntlr::processUpgradeReqFromL2Cache(ShmemReq* shmem_req, Byte* cach
          assert(add_result == true);
          directory_entry->setOwner(requester);
          directory_block_info->setDState(DirectoryState::MODIFIED);
+         LOG_PRINT("processUpgradeReqFromL2Cache(): Setting Owner of 0x%x to %d\tCurr State: UNCACHED->MODIFIED", address, requester);
 
          if (cached_data_buf == NULL)
          {
@@ -1083,6 +1100,7 @@ DramDirectoryCntlr::processFlushRepFromL2Cache(core_id_t sender, ShmemMsg* shmem
    directory_entry->removeSharer(sender);
    directory_entry->setForwarder(INVALID_CORE_ID);
    directory_entry->setOwner(INVALID_CORE_ID);
+   LOG_PRINT("processFlushRepFromL2Cache(): Setting Owner of 0x%x to INVALID", address);
 
    // could be that this is a FLUSH to force a core with S-state to to write back clean data
    // to avoid a memory access
@@ -1115,6 +1133,7 @@ DramDirectoryCntlr::processFlushRepFromL2Cache(core_id_t sender, ShmemMsg* shmem
       {
          // Write Data to Dram
          sendDataToDram(address, shmem_msg->getRequester(), shmem_msg->getDataBuf(), now);
+         LOG_PRINT("Called processShReqFromL2Cache() from processInvRepFromL2Cache");
          processShReqFromL2Cache(shmem_req, shmem_msg->getDataBuf());
       }
       else if (shmem_req->getShmemMsg()->getMsgType() == ShmemMsg::UPGRADE_REQ)
@@ -1173,6 +1192,8 @@ DramDirectoryCntlr::processWbRepFromL2Cache(core_id_t sender, ShmemMsg* shmem_ms
    directory_entry->setOwner(INVALID_CORE_ID);
    directory_block_info->setDState(DirectoryState::SHARED);
 
+   LOG_PRINT("processWbRepFromL2Cache(): Setting Owner of 0x%x to INVALID\tCurr State: MODIFIED", address);
+
    if (m_dram_directory_req_queue_list->size(address) != 0)
    {
       ShmemReq* shmem_req = m_dram_directory_req_queue_list->front(address);
@@ -1187,6 +1208,7 @@ DramDirectoryCntlr::processWbRepFromL2Cache(core_id_t sender, ShmemMsg* shmem_ms
       LOG_ASSERT_ERROR(shmem_req->getShmemMsg()->getMsgType() == ShmemMsg::SH_REQ,
             "Address(0x%x), Req(%u)",
             address, shmem_req->getShmemMsg()->getMsgType());
+      LOG_PRINT("Called processShReqFromL2Cache() from processWbRepFromL2Cache");
       processShReqFromL2Cache(shmem_req, shmem_msg->getDataBuf());
    }
    else

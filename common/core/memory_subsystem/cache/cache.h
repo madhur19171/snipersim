@@ -49,18 +49,33 @@ class Cache : public CacheBase
             FaultInjector *fault_injector = NULL,
             AddressHomeLookup *ahl = NULL,
             int shared_cores = 0,
-            bool is_last_level_cache = false);
+            bool is_last_level_cache = false,
+            String partition_info = "");
       ~Cache();
 
       Lock& getSetLock(IntPtr addr);
+      Lock& getSetLock(core_id_t core_id, IntPtr addr);     // Madhur: WARNING: To be used only by the LLC! Overloaded to pass information about which core is accessing the cache
 
       bool invalidateSingleLine(IntPtr addr);
+      bool invalidateSingleLine(core_id_t core_id, IntPtr addr); // Madhur: WARNING: To be used only by the LLC! Overloaded to pass information about which core is accessing the cache
+      
       CacheBlockInfo* accessSingleLine(IntPtr addr,
             access_t access_type, Byte* buff, UInt32 bytes, SubsecondTime now, bool update_replacement);
+
+      CacheBlockInfo* accessSingleLine(core_id_t core_id, IntPtr addr,
+            access_t access_type, Byte* buff, UInt32 bytes, SubsecondTime now, bool update_replacement);    // Madhur: WARNING: To be used only by the LLC! Overloaded to pass information about which core is accessing the cache
+      
       void insertSingleLine(IntPtr addr, Byte* fill_buff,
             bool* eviction, IntPtr* evict_addr,
             CacheBlockInfo* evict_block_info, Byte* evict_buff, SubsecondTime now, CacheCntlr *cntlr = NULL);
+
+      void insertSingleLine(core_id_t core_id, IntPtr addr, Byte* fill_buff,
+            bool* eviction, IntPtr* evict_addr,
+            CacheBlockInfo* evict_block_info, Byte* evict_buff, SubsecondTime now, CacheCntlr *cntlr = NULL);
+
       CacheBlockInfo* peekSingleLine(IntPtr addr);
+
+      CacheBlockInfo* peekSingleLine(core_id_t core_id, IntPtr addr);   // Madhur: WARNING: To be used only by the LLC! Overloaded to pass information about which core is accessing the cache
 
       CacheBlockInfo* peekBlock(UInt32 set_index, UInt32 way) const { return m_sets[set_index]->peekBlock(way); }
 

@@ -8,7 +8,7 @@
 
 CacheBase::CacheBase(
    String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size,
-   CacheBase::hash_t hash, AddressHomeLookup *ahl, int shared_cores, core_id_t core_id, bool is_last_level_cache)
+   CacheBase::hash_t hash, AddressHomeLookup *ahl, int shared_cores, core_id_t core_id, bool is_last_level_cache, String partition_info)
 :
    m_name(name),
    m_cache_size(UInt64(num_sets) * associativity * cache_block_size),
@@ -19,7 +19,8 @@ CacheBase::CacheBase(
    m_ahl(ahl),
    m_shared_cores(shared_cores),
    m_core_id(core_id),
-   m_is_last_level_cache(is_last_level_cache)
+   m_is_last_level_cache(is_last_level_cache),
+   m_partition_info(partition_info)
 
 {
    m_log_blocksize = floorLog2(m_blocksize);
@@ -27,8 +28,11 @@ CacheBase::CacheBase(
 
    is_hash_initialized = false;
 
-   setStartArray = (int *) calloc(m_shared_cores, sizeof(int));
-   setLengthArray = (int *) calloc(m_shared_cores, sizeof(int));
+   setStartArray = (int *) calloc(m_shared_cores + 1, sizeof(int));
+   setLengthArray = (int *) calloc(m_shared_cores + 1, sizeof(int));
+
+   // if(m_is_last_level_cache)
+   //    std::cout << "LLC Partition Info: " << m_partition_info  << std::endl;
 
    LOG_ASSERT_ERROR((m_num_sets == (1UL << floorLog2(m_num_sets))) || (hash != CacheBase::HASH_MASK),
       "Caches of non-power of 2 size need funky hash function");
@@ -119,6 +123,69 @@ CacheBase::splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index) const
       	 set_index = block_num % (m_num_sets - 1);
       	 break;
       }
+
+      default:
+         LOG_PRINT_ERROR("Invalid hash function %d", m_hash);
+   }
+}
+
+// Only the LLC supports Fair and unfair partitioning scheme
+void
+CacheBase::splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag, UInt32& set_index) const
+{
+   tag = addr >> m_log_blocksize;
+
+   IntPtr linearAddress = m_ahl ? m_ahl->getLinearAddress(addr) : addr;
+   IntPtr block_num = linearAddress >> m_log_blocksize;
+
+   switch(m_hash)
+   {
+      case CacheBase::HASH_MASK:
+         set_index = block_num & (m_num_sets-1);
+         break;
+      case CacheBase::HASH_MOD:
+         set_index = block_num % m_num_sets;
+         break;
+      case CacheBase::HASH_RNG1_MOD:
+      {
+         UInt64 state = rng_seed(block_num);
+         set_index = rng_next(state) % m_num_sets;
+         break;
+      }
+      case CacheBase::HASH_RNG2_MOD:
+      {
+         UInt64 state = rng_seed(block_num);
+         rng_next(state);
+         set_index = rng_next(state) % m_num_sets;
+         break;
+      }
+      case CacheBase::HASH_PRIME_DIS:
+      {
+
+      	 //Prime Displacement Hashing Function (HPCA04)
+         UInt64 si = block_num % m_num_sets;
+         UInt64 Ti = block_num >> m_log_num_sets;
+         UInt64 rho = 3;
+         set_index = (rho * Ti + si) % m_num_sets;
+         break;
+      }
+      case CacheBase::HASH_XOR_MOD:
+      {
+      	 //Based on related work of "Eliminating Conflict Misses Using Prime Number-Based Cache Indexing" (TC may 2005)
+      	 //XOR based hash function
+      	 UInt64 si = block_num % m_num_sets;
+      	 UInt64 ti = (block_num >> m_log_num_sets) % m_num_sets;
+      	 set_index = (si ^ ti); // ^ -> bitwise XOR
+      	 break;
+      }
+      case CacheBase::HASH_MER_MOD:
+      {
+      	 //Based on related work of "Eliminating Conflict Misses Using Prime Number-Based Cache Indexing" (TC may 2005)
+      	 //Mersenne based hash function
+      	 //Disadvantage of this mod is that we will not use one set in our cache.
+      	 set_index = block_num % (m_num_sets - 1);
+      	 break;
+      }
       case CacheBase::HASH_FAIR_SHARE:
       {
          /* For LLC, in Set-Based Partitioning
@@ -126,14 +193,21 @@ CacheBase::splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index) const
             Sets in the cache.
             For non-LLC, it is same as HASH_MOD
           */
-         set_index = ((block_num << floorLog2(m_shared_cores)) + m_core_id) % (m_num_sets);
+         set_index = ((block_num << floorLog2(m_shared_cores)) + core_id) % (m_num_sets);
          break;
       }
 
       case CacheBase::HASH_UNFAIR_SHARE:
       {
          initializeUnfairHash();
-         set_index = setStartArray[m_core_id] + block_num % setLengthArray[m_core_id];
+
+         // if(addr >= sharedAddressStart && addr <= sharedAddressEnd)
+         //    set_index = setStartArray[4] + block_num % setLengthArray[4];
+         // else
+            set_index = setStartArray[core_id] + block_num % setLengthArray[core_id];
+
+         if(m_core_id != 0)
+            std::cout << core_id << "  ";
          break;
       }
 
@@ -148,11 +222,14 @@ void CacheBase::initializeUnfairHash() const{
 
    is_hash_initialized = true;
 
-   int coreShare[] = {97, 1, 1, 1};
+   int coreShare[] = {10, 10, 10, 10, 60};
+   
+   sharedAddressStart = 0x00000000;
+   sharedAddressEnd = 0xffffffff;
 
    std::cout << "Number Of Sets: " << m_num_sets << std::endl;
 
-   for(int i = 0; i < m_shared_cores; i++){
+   for(int i = 0; i < m_shared_cores + 1; i++){
       setLengthArray[i] = (int)((coreShare[i] / 100.0) * m_num_sets);
 
       if(i == 0){
@@ -171,6 +248,14 @@ CacheBase::splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index,
 {
    block_offset = addr & (m_blocksize-1);
    splitAddress(addr, tag, set_index);
+}
+
+void
+CacheBase::splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag, UInt32& set_index,
+                  UInt32& block_offset) const
+{
+   block_offset = addr & (m_blocksize-1);
+   splitAddress(core_id, addr, tag, set_index);
 }
 
 IntPtr

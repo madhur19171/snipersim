@@ -77,6 +77,7 @@ class CacheBase
       int m_shared_cores;
       core_id_t m_core_id;
       bool m_is_last_level_cache;
+      String m_partition_info;
 
       // computed params
       UInt32 m_log_blocksize;
@@ -87,15 +88,19 @@ class CacheBase
       void initializeUnfairHash() const;  // Initializes the Start and Length array
       int* setStartArray;
       int* setLengthArray;
+      mutable IntPtr sharedAddressStart;
+      mutable IntPtr sharedAddressEnd;
 
    public:
       // constructors/destructors
-      CacheBase(String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size, CacheBase::hash_t hash, AddressHomeLookup *ahl = NULL, int shared_cores = 0, core_id_t core_id = 0, bool  is_last_level_cache = false);
+      CacheBase(String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size, CacheBase::hash_t hash, AddressHomeLookup *ahl = NULL, int shared_cores = 0, core_id_t core_id = 0, bool  is_last_level_cache = false, String m_partition_info = "");
       virtual ~CacheBase();
 
       // utilities
       void splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index) const;
+      void splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag, UInt32& set_index) const;
       void splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index, UInt32& block_offset) const;
+      void splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag, UInt32& set_index, UInt32& block_offset) const;
       IntPtr tagToAddress(const IntPtr tag);
       String getName(void) { return m_name; }
 

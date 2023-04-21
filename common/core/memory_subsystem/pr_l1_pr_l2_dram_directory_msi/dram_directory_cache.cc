@@ -72,6 +72,7 @@ DramDirectoryCache::getDirectoryEntry(IntPtr address, bool modeled)
       {
          // Simple check for now. Make sophisticated later
          directory_entry->setAddress(address);
+         LOG_PRINT("getDirectoryEntry: Creating a new directory entry\tAddress: 0x%x", address);
          return directory_entry;
       }
    }
