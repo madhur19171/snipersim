@@ -201,13 +201,13 @@ CacheBase::splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag,
       {
          initializeUnfairHash();
 
-         // if(addr >= sharedAddressStart && addr <= sharedAddressEnd)
-         //    set_index = setStartArray[4] + block_num % setLengthArray[4];
-         // else
+         if(addr >= sharedAddressStart && addr <= sharedAddressEnd)
+            set_index = setStartArray[4] + block_num % setLengthArray[4];
+         else{
             set_index = setStartArray[core_id] + block_num % setLengthArray[core_id];
+            printf("Accessing OOB Address: 0x%lx\n", addr);
+         }
 
-         if(m_core_id != 0)
-            std::cout << core_id << "  ";
          break;
       }
 
@@ -224,8 +224,8 @@ void CacheBase::initializeUnfairHash() const{
 
    int coreShare[] = {10, 10, 10, 10, 60};
    
-   sharedAddressStart = 0x00000000;
-   sharedAddressEnd = 0xffffffff;
+   sharedAddressStart   =  0x000000000000;
+   sharedAddressEnd     =  0xffffffffffff;
 
    std::cout << "Number Of Sets: " << m_num_sets << std::endl;
 
