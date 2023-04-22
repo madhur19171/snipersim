@@ -5,6 +5,8 @@
 #include "address_home_lookup.h"
 
 #include <iostream>
+#include <string>
+#include <sstream>
 
 CacheBase::CacheBase(
    String name, UInt32 num_sets, UInt32 associativity, UInt32 cache_block_size,
@@ -216,13 +218,42 @@ CacheBase::splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag,
    }
 }
 
+int* parsePartitionInfo(String partitionInfoS){
+   int numPartitions = 1;
+
+   int *coreShare = NULL;
+
+   std::string partitionInfo = std::string(partitionInfoS.c_str());
+
+   std::string::iterator it;
+   for(it = partitionInfo.begin(); it != partitionInfo.end(); it++){
+      if(*it == ':')
+         numPartitions++;
+   }
+
+   coreShare = (int *) malloc(sizeof(int) * numPartitions);
+
+   std::stringstream ss(partitionInfo);
+
+   std::string s;
+   int i = 0;
+   while (std::getline(ss, s, ':')) {
+      coreShare[i] = std::stoi(s);
+      i++;
+   }
+
+   return coreShare;
+}
+
 void CacheBase::initializeUnfairHash() const{
    if(is_hash_initialized)
       return;
 
    is_hash_initialized = true;
 
-   int coreShare[] = {10, 10, 10, 10, 60};
+   int *coreShare = NULL;
+
+   coreShare = parsePartitionInfo(m_partition_info);
    
    sharedAddressStart   =  0x000000000000;
    sharedAddressEnd     =  0xffffffffffff;
