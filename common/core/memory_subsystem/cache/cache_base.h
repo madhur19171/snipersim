@@ -88,6 +88,7 @@ class CacheBase
       void initializeUnfairHash() const;  // Initializes the Start and Length array
       int* setStartArray;
       int* setLengthArray;
+      mutable uint64_t sharedAddressRanges[962][2];
       mutable IntPtr sharedAddressStart;
       mutable IntPtr sharedAddressEnd;
 
@@ -97,6 +98,7 @@ class CacheBase
       virtual ~CacheBase();
 
       // utilities
+      bool isAddressShared(const IntPtr addr) const;
       void splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index) const;
       void splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag, UInt32& set_index) const;
       void splitAddress(const IntPtr addr, IntPtr& tag, UInt32& set_index, UInt32& block_offset) const;
