@@ -8,6 +8,7 @@ $(error The TARGET variable must be set to use the shared Makefile)
 endif
 
 CC=$(SNIPER_CC)
+CXX=$(SNIPER_CXX)
 LDFLAGS=$(SNIPER_LDFLAGS)
 CFLAGS=$(SNIPER_CFLAGS)
 

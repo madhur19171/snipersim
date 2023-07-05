@@ -204,11 +204,13 @@ CacheBase::splitAddress(const core_id_t core_id, const IntPtr addr, IntPtr& tag,
       {
          initializeUnfairHash();
 
-         if(isAddressShared(addr))
+         if(isAddressShared(addr)){
+            LOG_PRINT("Access Shared Address: 0x%x, core: %d", addr, core_id);
             set_index = setStartArray[4] + block_num % setLengthArray[4];
+         }
          else{
             set_index = setStartArray[core_id] + block_num % setLengthArray[core_id];
-            // printf("Accessing OOB Address: 0x%lx\n", addr);
+            LOG_PRINT("Access Private Address: 0x%x, core: %d", addr, core_id);
          }
 
          break;
@@ -247,10 +249,14 @@ int* parsePartitionInfo(String partitionInfoS){
 }
 
 bool CacheBase::isAddressShared(const IntPtr addr) const{
-   for(int i = 0; i < 962; i++){
-      if(addr >= sharedAddressRanges[i][0] && addr <= sharedAddressRanges[i][1])
+   printf("Address Access: 0x%lx\n", addr);
+   IntPtr temp_addr;
+   for(int i = 0; i < 79; i++){
+      temp_addr = 0xfffffffff & addr;
+      if(temp_addr >= sharedAddressRanges[i][0] && temp_addr <= sharedAddressRanges[i][1])
          return true;
    }
+
    return false;
 }
 
@@ -260,13 +266,13 @@ void CacheBase::initializeUnfairHash() const{
 
    FILE *filePointer;
    
-   if ((filePointer = fopen("/media/madhur/CommonSpace/Work/SystemSimulators/Sniper/snipersim/test/fft/common_ranges.txt","r")) == NULL){
+   if ((filePointer = fopen("/media/madhur/CommonSpace/Work/SystemSimulators/Sniper/snipersim/test/tracing/common_ranges.txt","r")) == NULL){
        printf("Error! opening file");
        // Program exits if the file pointer returns NULL.
        exit(1);
    }
 
-   for(int i = 0; i < 962; i++){
+   for(int i = 0; i < 79; i++){
       fscanf(filePointer,"{%lx, %lx}\n", &sharedAddressRanges[i][0], &sharedAddressRanges[i][1]);
    }
 

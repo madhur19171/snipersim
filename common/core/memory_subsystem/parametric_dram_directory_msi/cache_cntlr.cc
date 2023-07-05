@@ -329,6 +329,8 @@ CacheCntlr::setDRAMDirectAccess(DramCntlrInterface* dram_cntlr, UInt64 num_outst
 /*****************************************************************************
  * operations called by core on first-level cache
  *****************************************************************************/
+#define LOG_PRINT_DUMP LOG_PRINT
+#define LOG_PRINT_ADDRESS MYLOG
 
 HitWhere::where_t
 CacheCntlr::processMemOpFromCore(
@@ -344,9 +346,11 @@ CacheCntlr::processMemOpFromCore(
    // Protect against concurrent access from sibling SMT threads
    ScopedLock sl_smt(m_master->m_smt_lock);
 
-   // LOG_PRINT("processMemOpFromCore(), lock_signal(%u), mem_op_type(%u), ca_address(0x%x)",
-   //           lock_signal, mem_op_type, ca_address);
-   LOG_PRINT("0x%x",
+   ca_address &= 0xfffffffff;
+
+   // LOG_PRINT_DUMP("processMemOpFromCore(), lock_signal(%u), mem_op_type(%u), ca_address(0x%x)",
+   // //           lock_signal, mem_op_type, ca_address);
+   LOG_PRINT_ADDRESS("0x%lx",
             ca_address);
 MYLOG("----------------------------------------------");
 MYLOG("%c%c %lx+%u..+%u", mem_op_type == Core::WRITE ? 'W' : 'R', mem_op_type == Core::READ_EX ? 'X' : ' ', ca_address, offset, data_length);
@@ -485,7 +489,7 @@ MYLOG("L1 miss");
          acquireStackLock(ca_address, true);
       #endif
 
-      // LOG_PRINT("L1 Miss\tAddess: 0x%x\tCurrent Cache State: %d", ca_address, getCacheState(ca_address));
+      LOG_PRINT_DUMP("L1 Miss\tAddess: 0x%x\tCurrent Cache State: %d", ca_address, getCacheState(ca_address));
 
       // Invalidate the cache block before passing the request to L2 Cache
       // A write Miss occurs when the cache block to be written is in any state other than Modified.
@@ -493,14 +497,14 @@ MYLOG("L1 miss");
       if (getCacheState(ca_address) != CacheState::INVALID)
       {
          invalidateCacheBlock(ca_address);
-         // LOG_PRINT("Invalidation after Miss\tAddess: 0x%x\tCache State: (%d)", ca_address, getCacheState(ca_address));
+         LOG_PRINT_DUMP("Invalidation after Miss\tAddess: 0x%x\tCache State: (%d)", ca_address, getCacheState(ca_address));
       }
 
-// LOG_PRINT("processMemOpFromCore %s before next", MemComponentString(m_mem_component));
+LOG_PRINT_DUMP("processMemOpFromCore %s before next", MemComponentString(m_mem_component));
       // Sending the Miss request to the Next Level Cache
       hit_where = m_next_cache_cntlr->processShmemReqFromPrevCache(this, mem_op_type, ca_address, modeled, count, Prefetch::NONE, t_start, false);
       bool next_cache_hit = hit_where != HitWhere::MISS;
-// LOG_PRINT("processMemOpFromCore %s next hit = %d", MemComponentString(m_mem_component), next_cache_hit);
+LOG_PRINT_DUMP("processMemOpFromCore %s next hit = %d", MemComponentString(m_mem_component), next_cache_hit);
 
       if (next_cache_hit) {
 
@@ -835,7 +839,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
       updateCounters(mem_op_type, address, cache_hit, getCacheState(address), isPrefetch);
    }
 
-   // LOG_PRINT("processShmemReqFromPrevCache: Memory Component: %s\tAddress: 0x%x\tHit: %d", MemComponentString(m_mem_component), address, cache_hit);
+   LOG_PRINT_DUMP("processShmemReqFromPrevCache: Memory Component: %s\tAddress: 0x%x\tHit: %d", MemComponentString(m_mem_component), address, cache_hit);
    if (cache_hit)
    {
       if (isPrefetch == Prefetch::NONE && cache_block_info->hasOption(CacheBlockInfo::PREFETCH))
@@ -897,7 +901,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
       }
       else if (cache_block_info->getCState() == CacheState::MODIFIED) // reading MODIFIED data
       {
-         // LOG_PRINT("reading MODIFIED data");
+         LOG_PRINT_DUMP("reading MODIFIED data");
          MYLOG("reading MODIFIED data");
          /* Writeback in previous levels */
          SubsecondTime latency = SubsecondTime::Zero();
@@ -915,7 +919,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
                sibling_hit |= res.second;
             }
          }
-         // LOG_PRINT("%s:\tRead Modified Address 0x%x\tNumber of Sharers: %d", MemComponentString(m_mem_component), address, counter);
+         LOG_PRINT_DUMP("%s:\tRead Modified Address 0x%x\tNumber of Sharers: %d", MemComponentString(m_mem_component), address, counter);
          MYLOG("add latency %s, sibling_hit(%u)", itostr(latency).c_str(), sibling_hit);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);
@@ -934,7 +938,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
             }
          }
 
-         // LOG_PRINT("%s:\tRead Exclusive Address 0x%x", MemComponentString(m_mem_component), address);
+         LOG_PRINT_DUMP("%s:\tRead Exclusive Address 0x%x", MemComponentString(m_mem_component), address);
          MYLOG("add latency %s, sibling_hit(%u)", itostr(latency).c_str(), sibling_hit);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);
@@ -966,7 +970,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
                latency = getMax<SubsecondTime>(latency, (*it)->updateCacheBlock(address, CacheState::INVALID, Transition::UPGRADE, NULL, ShmemPerfModel::_USER_THREAD).first);
          getMemoryManager()->incrElapsedTime(latency, ShmemPerfModel::_USER_THREAD);
          atomic_add_subsecondtime(stats.snoop_latency, latency);
-         // LOG_PRINT("%s:\tWrite Miss Exclusive Address 0x%x", MemComponentString(m_mem_component), address);
+         LOG_PRINT_DUMP("%s:\tWrite Miss Exclusive Address 0x%x", MemComponentString(m_mem_component), address);
          #ifdef ENABLE_TRACK_SHARING_PREVCACHES
          assert(! cache_block_info->hasCachedLoc());
          #endif
@@ -1006,7 +1010,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
 
             cache_hit = true;
             hit_where = HitWhere::where_t(m_mem_component);
-            // LOG_PRINT("Silent upgrade from E -> M for address %lx", address);
+            LOG_PRINT_DUMP("Silent upgrade from E -> M for address %lx", address);
             MYLOG("Silent upgrade from E -> M for address %lx", address);
             cache_block_info->setCState(CacheState::MODIFIED);
          }
@@ -1042,7 +1046,7 @@ CacheCntlr::processShmemReqFromPrevCache(CacheCntlr* requester, Core::mem_op_t m
          }
          else
          {
-            // LOG_PRINT("LLC Miss on address 0x%x\tInitiating Directory Access", address);
+            LOG_PRINT_DUMP("LLC Miss on address 0x%x\tInitiating Directory Access", address);
             initiateDirectoryAccess(mem_op_type, address, isPrefetch != Prefetch::NONE, t_issue);
          }
       }
@@ -1268,7 +1272,7 @@ CacheCntlr::processUpgradeReqToDirectory(IntPtr address, ShmemPerf *perf, ShmemP
 void
 CacheCntlr::processShReqToDirectory(IntPtr address)
 {
-   // LOG_PRINT("SH REQ @ %lx", address);
+   LOG_PRINT_DUMP("SH REQ @ %lx", address);
 MYLOG("SH REQ @ %lx", address);
    getMemoryManager()->sendMsg(PrL1PrL2DramDirectoryMSI::ShmemMsg::SH_REQ,
          MemComponent::LAST_LEVEL_CACHE, MemComponent::TAG_DIR,
@@ -1329,20 +1333,22 @@ CacheCntlr::accessCache(
    {
       case Core::READ:
       case Core::READ_EX:
-         // LOG_PRINT("accessCache: LLC\tAddress: 0x%x\tType: READ", ca_address);
-         if(m_is_last_level_cache)
+         if(m_is_last_level_cache){
+            LOG_PRINT_DUMP("accessCache: LLC\tAddress: 0x%x\tType: READ", ca_address);
             m_master->m_cache->accessSingleLine(m_core_id, ca_address + offset, Cache::LOAD, data_buf, data_length,
                                              getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
+         }
          else
             m_master->m_cache->accessSingleLine(ca_address + offset, Cache::LOAD, data_buf, data_length,
                                              getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
          break;
 
       case Core::WRITE:
-         // LOG_PRINT("accessCache: LLC\tAddress: 0x%x\tType: WRITE", ca_address);
-         if(m_is_last_level_cache)
+         if(m_is_last_level_cache){
+            LOG_PRINT_DUMP("accessCache: LLC\tAddress: 0x%x\tType: WRITE", ca_address);
             m_master->m_cache->accessSingleLine(m_core_id, ca_address + offset, Cache::STORE, data_buf, data_length,
                                              getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
+         }
          else
             m_master->m_cache->accessSingleLine(ca_address + offset, Cache::STORE, data_buf, data_length,
                                              getShmemPerfModel()->getElapsedTime(ShmemPerfModel::_USER_THREAD), update_replacement);
@@ -1402,9 +1408,10 @@ CacheCntlr::invalidateCacheBlock(IntPtr address)
    assert(old_cstate != CacheState::MODIFIED);
    assert(old_cstate != CacheState::INVALID);
 
-   // LOG_PRINT("invalidateCacheBlock: LLC\tAddress: 0x%x", address);
-   if(m_is_last_level_cache)
+   if(m_is_last_level_cache){
+      LOG_PRINT_DUMP("invalidateCacheBlock: LLC\tAddress: 0x%x", address);
       m_master->m_cache->invalidateSingleLine(m_core_id, address);
+   }
    else
       m_master->m_cache->invalidateSingleLine(address);
 
@@ -1417,7 +1424,7 @@ CacheCntlr::invalidateCacheBlock(IntPtr address)
 void
 CacheCntlr::retrieveCacheBlock(IntPtr address, Byte* data_buf, ShmemPerfModel::Thread_t thread_num, bool update_replacement)
 {
-   // LOG_PRINT("retrieveCacheBlock: Address: 0x%x", address);
+   LOG_PRINT_DUMP("retrieveCacheBlock: Address: 0x%x", address);
    __attribute__((unused)) SharedCacheBlockInfo* cache_block_info = (SharedCacheBlockInfo*) ( 
                                                                                                 m_is_last_level_cache ? 
                                                                                                 m_master->m_cache->accessSingleLine(m_core_id, address, Cache::LOAD, data_buf, getCacheBlockSize(), getShmemPerfModel()->getElapsedTime(thread_num), update_replacement) 
@@ -1441,13 +1448,17 @@ MYLOG("insertCacheBlock l%d @ %lx as %c (now %c)", m_mem_component, address, CSt
    SharedCacheBlockInfo evict_block_info;
    Byte evict_buf[getCacheBlockSize()];
 
+   LOG_PRINT_DUMP("insertCacheBlock %s: Address: 0x%x", MemComponentString(m_mem_component), address);
+
    LOG_ASSERT_ERROR(getCacheState(address) == CacheState::INVALID, "we already have this line, can't add it again");
 
-   // LOG_PRINT("insertCacheBlock: Address: 0x%x", address);
-   if(m_is_last_level_cache)
+
+   if(m_is_last_level_cache){
+      // LOG_PRINT_DUMP("insertCacheBlock: Address: 0x%x", address);
       m_master->m_cache->insertSingleLine(m_core_id, address, data_buf,
          &eviction, &evict_address, &evict_block_info, evict_buf,
          getShmemPerfModel()->getElapsedTime(thread_num), this);
+   }
    else 
       m_master->m_cache->insertSingleLine(address, data_buf,
          &eviction, &evict_address, &evict_block_info, evict_buf,
@@ -1500,7 +1511,7 @@ MYLOG("evicting @%lx", evict_address);
       /* TODO: this part looks a lot like updateCacheBlock's dirty case, but with the eviction buffer
          instead of an address, and with a message to the directory at the end. Merge? */
 
-      // LOG_PRINT("Eviction: addr(0x%x)", evict_address);
+      LOG_PRINT_DUMP("Eviction: addr(0x%x)", evict_address);
       if (! m_master->m_prev_cache_cntlrs.empty()) {
          ScopedLock sl(getLock());
          /* propagate the update to the previous levels. they will write modified data back to our evict buffer when needed */
@@ -1787,7 +1798,7 @@ assert(data_length==getCacheBlockSize());
       if (data_buf)
          memcpy(m_master->m_evicting_buf + offset, data_buf, data_length);
    } else {
-      // LOG_PRINT("writeCacheBlock: Address: 0x%x", address);
+      LOG_PRINT_DUMP("writeCacheBlock: Address: 0x%x", address);
       __attribute__((unused)) SharedCacheBlockInfo* cache_block_info = (SharedCacheBlockInfo*) (m_is_last_level_cache ? 
                                                                                                 m_master->m_cache->accessSingleLine(
                                                                                                    m_core_id, address + offset, Cache::STORE, data_buf, data_length, getShmemPerfModel()->getElapsedTime(thread_num), false)
@@ -2270,7 +2281,7 @@ CacheCntlr::updateUncoreStatistics(HitWhere::where_t hit_where, SubsecondTime no
 void
 CacheCntlr::acquireLock(UInt64 address)
 {
-MYLOG("cache lock acquire %u # %u @ %lx", m_mem_component, m_core_id, address);
+LOG_PRINT_DUMP("cache lock acquire %u # %u @ %lx", m_mem_component, m_core_id, address);
    assert(isFirstLevel());
    // Lock this L1 cache for the set containing <address>.
    lastLevelCache()->m_master->getSetLock(address)->acquire_shared(m_core_id);
@@ -2279,7 +2290,7 @@ MYLOG("cache lock acquire %u # %u @ %lx", m_mem_component, m_core_id, address);
 void
 CacheCntlr::releaseLock(UInt64 address)
 {
-MYLOG("cache lock release %u # %u @ %lx", m_mem_component, m_core_id, address);
+LOG_PRINT_DUMP("cache lock release %u # %u @ %lx", m_mem_component, m_core_id, address);
    assert(isFirstLevel());
    lastLevelCache()->m_master->getSetLock(address)->release_shared(m_core_id);
 }
@@ -2287,7 +2298,7 @@ MYLOG("cache lock release %u # %u @ %lx", m_mem_component, m_core_id, address);
 void
 CacheCntlr::acquireStackLock(UInt64 address, bool this_is_locked)
 {
-MYLOG("stack lock acquire %u # %u @ %lx", m_mem_component, m_core_id, address);
+LOG_PRINT_DUMP("stack lock acquire %u # %u @ %lx", m_mem_component, m_core_id, address);
    // Lock the complete stack for the set containing <address>
    if (this_is_locked)
       // If two threads decide to upgrade at the same time, we could deadlock.
@@ -2300,7 +2311,7 @@ MYLOG("stack lock acquire %u # %u @ %lx", m_mem_component, m_core_id, address);
 void
 CacheCntlr::releaseStackLock(UInt64 address, bool this_is_locked)
 {
-MYLOG("stack lock release %u # %u @ %lx", m_mem_component, m_core_id, address);
+LOG_PRINT_DUMP("stack lock release %u # %u @ %lx", m_mem_component, m_core_id, address);
    if (this_is_locked)
       lastLevelCache()->m_master->getSetLock(address)->downgrade(m_core_id);
    else
